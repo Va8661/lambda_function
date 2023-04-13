@@ -1,0 +1,61 @@
+import boto3
+from datetime import datetime
+
+def lambda_handler(event, context):
+
+    # Connect to SQS
+    sqs = boto3.client('sqs')
+    queue_url = 'https://sqs.ap-south-1.amazonaws.com/717872824888/Mysqsqueue'
+
+    # Get messages from SQS
+    response = sqs.receive_message(
+        QueueUrl=queue_url,
+        MaxNumberOfMessages=1,
+        VisibilityTimeout=0,
+        WaitTimeSeconds=0
+    )
+
+    if 'Messages' in response:
+        # Get the first message
+        message = response['Messages'][0]
+
+        # Get the instance ID and command from the message body
+        body = message['Body']
+        instance_id, command = body.split(',')
+
+        # Connect to EC2
+        ec2 = boto3.resource('ec2')
+        instance = ec2.Instance(instance_id)
+
+        # Start or stop the instance
+        if command == 'start':
+            instance.start()
+            public_ip = instance.public_ip_address
+        print('Public IP:', public_ip)
+        elif command == 'stop':
+            instance.stop()
+
+      
+        # Delete the message from the queue
+        receipt_handle = message['ReceiptHandle']
+        sqs.delete_message(
+            QueueUrl=queue_url,
+            ReceiptHandle=receipt_handle
+        )
+
+        # Send the public IP as a custom metric to CloudWatch
+        cloudwatch = boto3.client('cloudwatch')
+        cloudwatch.put_metric_data(
+            Namespace='Custom',
+            MetricName='PublicIP',
+            Value=1,
+            Timestamp=datetime.now(),
+            Dimensions=[
+                {
+                    'Name': 'InstanceId',
+                    'Value': instance_id
+                }
+            ],
+            Unit='None',
+            StorageResolution=60
+        )
